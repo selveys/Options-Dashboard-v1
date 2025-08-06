@@ -1,3 +1,30 @@
+import yfinance as yf
+import streamlit as st
+import pandas as pd
+
+st.title("Live Options Chain Viewer")
+
+ticker = st.text_input("Enter Ticker Symbol", value="AAPL")
+
+if ticker:
+    stock = yf.Ticker(ticker)
+
+    # Get expiration dates
+    expirations = stock.options
+    selected_date = st.selectbox("Select Expiration Date", expirations)
+
+    # Get options chain
+    if selected_date:
+        options_chain = stock.option_chain(selected_date)
+        calls = options_chain.calls
+        puts = options_chain.puts
+
+        st.subheader("Calls")
+        st.dataframe(calls)
+
+        st.subheader("Puts")
+        st.dataframe(puts)
+
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
