@@ -1,76 +1,86 @@
-import yfinance as yf
-import streamlit as st
-import pandas as pd
-
-st.title("Live Options Chain Viewer")
-
-ticker = st.text_input("Enter Ticker Symbol", value="AAPL")
-
-if ticker:
-    stock = yf.Ticker(ticker)
-
-    # Get expiration dates
-    expirations = stock.options
-    selected_date = st.selectbox("Select Expiration Date", expirations)
-
-    # Get options chain
-    if selected_date:
-        options_chain = stock.option_chain(selected_date)
-        calls = options_chain.calls
-        puts = options_chain.puts
-
-        st.subheader("Calls")
-        st.dataframe(calls)
-
-        st.subheader("Puts")
-        st.dataframe(puts)
-
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
+import yfinance as yf
+import pandas as pd
 
-st.set_page_config(page_title="Options Trade Evaluator", layout="centered")
+st.set_page_config(page_title="Options Trade Evaluator", layout="wide")
 st.title("📊 Options Trade Evaluator Dashboard")
 
-# --- Inputs ---
-st.sidebar.header("Option Parameters")
-option_type = st.sidebar.selectbox("Option Type", ["Call", "Put"])
-stock_price = st.sidebar.number_input("Current Stock Price ($)", value=100.0)
-strike_price = st.sidebar.number_input("Strike Price ($)", value=105.0)
-premium = st.sidebar.number_input("Premium Paid/Received ($)", value=3.0)
-contracts = st.sidebar.number_input("Number of Contracts", value=1, step=1)
+# --- Ticker Input ---
+st.sidebar.header("Live Market Data")
+ticker = st.sidebar.text_input("Enter Ticker Symbol", value="AAPL")
 
-# --- Calculations ---
-contract_multiplier = 100
-x = np.linspace(stock_price * 0.5, stock_price * 1.5, 200)
+if ticker:
+    stock = yf.Ticker(ticker)
+    try:
+        current_price = stock.history(period="1d")['Close'][-1]
+        st.sidebar.metric("Current Stock Price", f"${current_price:.2f}")
 
-if option_type == "Call":
-    profit = np.maximum(x - strike_price, 0) - premium
-else:
-    profit = np.maximum(strike_price - x, 0) - premium
+        expirations = stock.options
+        selected_date = st.sidebar.selectbox("Select Expiration Date", expirations)
 
-total_profit = profit * contracts * contract_multiplier
+        if selected_date:
+            options_chain = stock.option_chain(selected_date)
+            option_type = st.sidebar.selectbox("Option Type", ["Call", "Put"])
+            df = options_chain.calls if option_type == "Call" else options_chain.puts
 
-# --- Outputs ---
-st.subheader("Trade Summary")
-st.markdown(f"**Option Type:** {option_type}")
-st.markdown(f"**Strike Price:** ${strike_price:.2f}")
-st.markdown(f"**Premium {'Paid' if premium > 0 else 'Received'}:** ${premium:.2f}")
-st.markdown(f"**Breakeven Price:** ${strike_price + premium if option_type == 'Call' else strike_price - premium:.2f}")
+            # Filter strikes near current price
+            df_filtered = df[(df['strike'] >= current_price * 0.8) & (df['strike'] <= current_price * 1.2)]
+            selected_strike = st.sidebar.selectbox("Select Strike Price", df_filtered['strike'].tolist())
 
-# --- Chart ---
-st.subheader("Profit / Loss at Expiration")
-fig, ax = plt.subplots()
-ax.plot(x, total_profit, label="P&L", linewidth=2)
-ax.axhline(0, color="gray", linestyle="--")
-ax.axvline(stock_price, color="blue", linestyle=":", label="Current Price")
-ax.set_xlabel("Stock Price at Expiration ($)")
-ax.set_ylabel("Profit / Loss ($)")
-ax.set_title("Options P&L at Expiration")
-ax.legend()
-ax.grid(True)
-st.pyplot(fig)
+            selected_row = df_filtered[df_filtered['strike'] == selected_strike].iloc[0]
+            premium = (selected_row['bid'] + selected_row['ask']) / 2
 
-# --- Final Metric ---
-st.metric("Max Profit", f"{'Unlimited' if option_type == 'Call' else f'${premium * contracts * contract_multiplier:.2f}'}")
-st.metric("Max Loss", f"${premium * contracts * contract_multiplier:.2f}")
+            contracts = st.sidebar.number_input("Number of Contracts", value=1, step=1)
+
+            # --- P&L Calculation ---
+            contract_multiplier = 100
+            x = np.linspace(current_price * 0.5, current_price * 1.5, 200)
+
+            if option_type == "Call":
+                profit = np.maximum(x - selected_strike, 0) - premium
+                breakeven = selected_strike + premium
+                max_profit = "Unlimited"
+            else:
+                profit = np.maximum(selected_strike - x, 0) - premium
+                breakeven = selected_strike - premium
+                max_profit = f"${premium * contracts * contract_multiplier:.2f}"
+
+            total_profit = profit * contracts * contract_multiplier
+
+            # --- Outputs ---
+            st.subheader("Trade Summary")
+            st.markdown(f"**Option Type:** {option_type}")
+            st.markdown(f"**Strike Price:** ${selected_strike:.2f}")
+            st.markdown(f"**Premium (Midpoint of Bid/Ask):** ${premium:.2f}")
+            st.markdown(f"**Expiration:** {selected_date}")
+            st.markdown(f"**Breakeven Price:** ${breakeven:.2f}")
+
+            # --- Chart ---
+            st.subheader("Profit / Loss at Expiration")
+            fig, ax = plt.subplots()
+            ax.plot(x, total_profit, label="P&L", linewidth=2)
+            ax.axhline(0, color="gray", linestyle="--")
+            ax.axvline(current_price, color="blue", linestyle=":", label="Current Price")
+            ax.set_xlabel("Stock Price at Expiration ($)")
+            ax.set_ylabel("Profit / Loss ($)")
+            ax.set_title("Options P&L at Expiration")
+            ax.legend()
+            ax.grid(True)
+            st.pyplot(fig)
+
+            # --- Final Metrics ---
+            st.metric("Max Profit", max_profit)
+            st.metric("Max Loss", f"${premium * contracts * contract_multiplier:.2f}")
+
+            # --- Optional: Full Options Table ---
+            with st.expander("View Full Options Chain"):
+                st.subheader("Calls")
+                st.dataframe(options_chain.calls)
+                st.subheader("Puts")
+                st.dataframe(options_chain.puts)
+
+    except Exception as e:
+        st.error(f"Error retrieving data for ticker '{ticker}': {e}")
+
